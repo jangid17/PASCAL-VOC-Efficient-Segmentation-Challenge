@@ -1,0 +1,7 @@
+__pycache__/
+*.pth
+*.pt
+VOC2012_train_val/
+VOC2012_test/
+*.pyc
+.DS_Store
