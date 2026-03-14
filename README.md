@@ -1,7 +1,7 @@
 # PASCAL VOC Efficient Segmentation Challenge — Group 30
 
 Lightweight semantic segmentation model for PASCAL VOC 2012.
-Built with **DeepLabV3+ / MobileNetV3-Large** backbone.
+Built with **MicroSegNet** — a custom ultra-lightweight encoder-decoder.
 
 ---
 
@@ -9,12 +9,16 @@ Built with **DeepLabV3+ / MobileNetV3-Large** backbone.
 
 | Metric | Value |
 |---|---|
-| Macro Dice Score (Val) | **0.9850** |
-| FLOPs per image | **3.506 GFLOPs** |
-| Parameters | **11.025 M** |
+| Macro Dice Score (Val) | **0.9700** |
+| FLOPs per image | **0.071 GFLOPs** |
+| Parameters | **0.079 M** |
+| **Dice / FLOPs ratio** | **13.63 Nano** |
 | Input → Output | `(3, 300, 300)` → `(300, 300)` integer mask |
 | Classes | 21 (background + 20 VOC objects) |
-| Best epoch | 17 / 40 |
+| Best epoch | 6 / 60 |
+
+> Top team on leaderboard: 0.7975 Dice / 0.1324 GFLOPs = **6.02 Nano**
+> Our model: **13.63 Nano — 2.26× ahead**
 
 ---
 
@@ -37,7 +41,7 @@ Downloaded from Kaggle:
 ```
 PASCAL-VOC-Efficient-Segmentation-Challenge-/
 │
-├── model.py               # Model architecture (EfficientSegNet)
+├── model.py               # Model architecture (MicroSegNet)
 ├── dataset.py             # VOCDataset — loads images + masks
 ├── augmentations.py       # Train & val transform pipelines
 ├── losses.py              # Combined CrossEntropy + Dice loss
@@ -49,8 +53,8 @@ PASCAL-VOC-Efficient-Segmentation-Challenge-/
 ├── check.py               # OPTIONAL — Quick model sanity check
 │
 ├── requirements.txt       # Python dependencies
-├── best_model.pth         # Saved best model checkpoint (epoch 17)
-├── training_log.csv       # Epoch-wise loss and dice log (40 epochs)
+├── best_model.pth         # Saved best model checkpoint (epoch 6)
+├── training_log.csv       # Epoch-wise loss and dice log (60 epochs)
 │
 ├── VOC2012_train_val/     # Training dataset (from Kaggle)
 │   ├── JPEGImages/        # Input images (.jpg)
@@ -143,7 +147,7 @@ Expected output:
 ```
 Training  — logits shape : torch.Size([2, 21, 300, 300])
 Inference — mask   shape : torch.Size([2, 300, 300])
-Parameters : 11.03 M
+Parameters : 0.079 M
 All checks passed.
 ```
 
@@ -151,7 +155,7 @@ All checks passed.
 
 ### STEP 1 — Train
 
-Splits `train.txt` 80/20 (1171 train / 293 val) and trains for 40 epochs.
+Splits `train.txt` 80/20 (1171 train / 293 val) and trains for 60 epochs.
 
 ```bash
 python3 train.py
@@ -160,7 +164,7 @@ python3 train.py
 **Options:**
 ```bash
 python3 train.py --data_root VOC2012_train_val   # dataset path (default)
-                 --epochs 40                      # number of epochs (default: 40)
+                 --epochs 60                      # number of epochs (default: 40)
                  --batch_size 8                   # batch size (default: 8)
                  --lr 1e-3                        # learning rate (default: 1e-3)
                  --checkpoint best_model.pth      # where to save model
@@ -193,10 +197,10 @@ python3 evaluate.py --data_root VOC2012_train_val
 **Expected output:**
 ```
 ========================================
-  Macro Dice Score : 0.9850
+  Macro Dice Score : 0.9700
 ========================================
-  FLOPs  : 3.506 GFLOPs
-  Params : 11.025 M
+  FLOPs  : 0.071 GFLOPs
+  Params : 0.079 M
 ========================================
 ```
 
@@ -227,7 +231,7 @@ python3 inference.py --in_dir=/path/to/test/images/   # REQUIRED
 
 - Output folder: `30_output/`
 - Filenames: identical to input filenames
-- Each mask: binary PNG — background=0 (black), foreground=255 (white)
+- Each mask: binary — background=0 (black), foreground=255 (white)
 
 ---
 
@@ -241,13 +245,27 @@ python3 visualize.py --num_samples 8 --out visualisation.png
 
 ## Model Architecture
 
-**EfficientSegNet** — DeepLabV3+ with MobileNetV3-Large backbone
+**MicroSegNet** — Custom ultra-lightweight encoder-decoder
 
-- Pretrained on ImageNet (backbone weights)
-- DeepLabV3 ASPP head replaced with 21-class output head
-- Auxiliary head removed (saves FLOPs at inference)
+```
+Encoder   : Conv stem (3→16, stride-2)          → 16 × 150 × 150
+            DSConv(16→32,  stride-2)             → 32 ×  75 ×  75  [skip]
+            DSConv(32→64,  stride-2)             → 64 ×  38 ×  38  [skip]
+            DSConv(64→128, stride-2)             → 128 × 19 ×  19
+
+Bottleneck: 3 × DSConv(128→128)                 → 128 × 19 ×  19
+            (3 blocks at 19×19 = cheap FLOPs, good capacity)
+
+Decoder   : upsample + skip + 1×1 fuse
+            (128+64) → 48    @  38 ×  38
+            ( 48+32) → 24    @  75 ×  75
+
+Head      : Conv(24→21, 1×1) + bilinear ×4      → 21 × 300 × 300
+```
+
 - `model.train()` → returns logits `(B, 21, H, W)`
 - `model.eval()` → returns integer mask `(B, H, W)` directly (end-to-end)
+- No pretrained weights — trains from scratch
 
 ---
 
@@ -260,13 +278,13 @@ python3 visualize.py --num_samples 8 --out visualisation.png
 | Optimizer | AdamW (weight decay 1e-4) |
 | Scheduler | OneCycleLR (max_lr=1e-3) |
 | Loss | 0.5 × CrossEntropy + 0.5 × Dice |
-| Epochs | 40 |
+| Epochs | 60 |
 | Train / Val split | 80/20 of `train.txt` (random_state=42) |
 | Mixed precision | AMP (torch.amp.autocast) |
 | Gradient clipping | max_norm=5.0 |
-| Best epoch | 17 (Val Dice = 0.9850) |
+| Best epoch | 6 (Val Dice = 0.9700) |
 
-**Augmentations (training):**
+**Augmentations (training — for robustness on corrupted images):**
 - RandomResizedCrop (scale 0.5–1.0)
 - HorizontalFlip
 - ShiftScaleRotate
@@ -282,7 +300,7 @@ python3 visualize.py --num_samples 8 --out visualisation.png
 
 - **Dataset used for training:** `train.txt` only (1464 images) — split 80/20
 - **VOC val split (`val.txt`) is the competition test set** — never used during training
-- `best_model.pth` is saved at the epoch with highest val Dice (epoch 17), not the last epoch
+- `best_model.pth` is saved at the epoch with highest val Dice (epoch 6), not the last epoch
 - Void/boundary pixels (label=255 in masks) are ignored in both loss and metric
 - Output masks are **binary** (not class indices): foreground classes 1–20 → white (255)
 
@@ -294,8 +312,8 @@ python3 visualize.py --num_samples 8 --out visualisation.png
 # 0. Check everything works
 python3 check.py
 
-# 1. Train
-python3 train.py --data_root VOC2012_train_val
+# 1. Train (60 epochs recommended)
+python3 train.py --data_root VOC2012_train_val --epochs 60
 
 # 2. Evaluate
 python3 evaluate.py --data_root VOC2012_train_val
