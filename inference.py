@@ -1,13 +1,14 @@
 """
 inference.py — PASCAL VOC Efficient Segmentation Challenge (Group 30)
 ======================================================================
-Runs the trained model on all images in a folder and writes 21-class
-segmentation masks (pixel values = class index 0-20) to an output folder.
+Runs the trained model on all images in a folder and writes BINARY
+segmentation masks (background=0/black, foreground=255/white) to an
+output folder.
 
-Output filename format: {original_name}_mask.png
+Output filename format: same as input filename
 Output folder:         30_output/  (group number_output)
 
-Usage (as per submission guidelines):
+Usage:
     python inference.py --in_dir=/path/to/test_images/ --out_dir=30_output/
     python inference.py --in_dir=/path/to/test_images/
 """
@@ -110,16 +111,17 @@ def main():
             # Forward pass — returns integer class mask (H, W), values 0-20
             class_mask = model(tensor).squeeze(0).cpu().numpy().astype(np.uint8)
 
-            # Resize mask back to original image dimensions (nearest-neighbour
-            # preserves integer class indices exactly)
+            # Resize mask back to original image dimensions
             class_mask = cv2.resize(class_mask, (orig_w, orig_h),
                                     interpolation=cv2.INTER_NEAREST)
 
-            # Output filename: {original_stem}_mask.png
-            stem     = os.path.splitext(fname)[0]
-            out_name = f"{stem}_mask.png"
-            out_path = os.path.join(args.out_dir, out_name)
-            cv2.imwrite(out_path, class_mask)
+            # Convert to binary: classes 1-20 → foreground (255/white)
+            #                    class  0    → background (0/black)
+            binary_mask = np.where(class_mask > 0, 255, 0).astype(np.uint8)
+
+            # Output filename: same as input filename
+            out_path = os.path.join(args.out_dir, fname)
+            cv2.imwrite(out_path, binary_mask)
 
     print(f"\nDone. {len(image_files)} masks saved to '{args.out_dir}/'")
 
