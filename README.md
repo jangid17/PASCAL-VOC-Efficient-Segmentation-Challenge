@@ -11,11 +11,11 @@ LRASPP-style decoder, trained at 192×192 input to maximise the Dice/GFLOPs rati
 | Metric | Value |
 |---|---|
 | **Macro Dice Score (Val, 21 classes)** | **0.6421** |
-| **FLOPs per image** | **0.050 GFLOPs** (at 192×192 input) |
+| **FLOPs per image** | **0.050 GFLOPs** (at 192×192 inference) |
 | **Dice / GFLOPs ratio** | **12.84** |
 | **Parameters** | **1.079 M** |
-| Input → Output | `(3, 192, 192)` → `(H, W)` integer mask (class 0–20) |
-| Classes | 21 (background + 20 VOC objects) |
+| Input → Output | `(3, H, W)` → `(H, W)` binary mask (0=background, 255=foreground) |
+| Classes | 21 internally (background + 20 VOC objects) → combined to binary output |
 | Best epoch | 147 / 150 |
 | GPU inference | ~3 ms / image |
 
@@ -47,12 +47,11 @@ PASCAL-VOC-Efficient-Segmentation-Challenge-/
 │
 ├── train.py               # STEP 1 — Train the model
 ├── evaluate.py            # STEP 2 — Evaluate Dice + FLOPs
-├── inference.py           # STEP 3 — Generate masks for submission
+├── inference.py           # STEP 3 — Generate binary masks for submission
 │
 ├── requirements.txt       # Python dependencies
 ├── best_model.pth         # Saved best model checkpoint
 ├── training_log.csv       # Epoch-wise loss and dice log
-├── training_stdout.log    # Full training output log
 │
 ├── VOC2012_train_val/     # Training dataset (from Kaggle)
 │   ├── JPEGImages/
@@ -64,8 +63,8 @@ PASCAL-VOC-Efficient-Segmentation-Challenge-/
 ├── VOC2012_test/          # Test dataset (images only)
 │   └── JPEGImages/
 │
-└── 30_output/             # OUTPUT — predicted masks for submission
-    └── <name>_mask.png    # One mask per test image
+└── 30_output/             # OUTPUT — predicted binary masks for submission
+    └── <name>.jpg         # Same filename as input (binary: 0=black, 255=white)
 ```
 
 ---
@@ -88,7 +87,7 @@ pip install -r requirements.txt
 python3 train.py --epochs 150 --batch_size 16 --lr 1e-3 --backbone_lr 1e-4
 ```
 
-Output: `best_model.pth`, `training_log.csv`, `training_stdout.log`
+Output: `best_model.pth`, `training_log.csv`
 
 ### STEP 2 — Evaluate
 
@@ -112,7 +111,10 @@ Expected output:
 python3 inference.py --in_dir=VOC2012_test/JPEGImages/ --out_dir=30_output/
 ```
 
-Output: `30_output/<name>_mask.png` — 16135 integer class masks (0–20)
+Output: `30_output/<original_filename>` — 16135 binary masks
+- Background pixels → **0 (black)**
+- Foreground pixels (any of classes 1–20) → **255 (white)**
+- Output filename is **identical** to input filename
 
 ---
 
@@ -137,7 +139,7 @@ Decoder (trained from scratch):
 ```
 
 - `model.train()` → logits `(B, 21, H, W)`
-- `model.eval()` → integer mask `(B, H, W)` (values 0–20)
+- `model.eval()` → integer mask `(B, H, W)` (values 0–20), converted to binary in inference
 - Backbone: ImageNet pretrained (MobileNet_V3_Small_Weights.IMAGENET1K_V1)
 - Decoder: trained from scratch with 10× higher LR
 
@@ -159,7 +161,7 @@ Decoder (trained from scratch):
 | Gradient clipping | max_norm=5.0 |
 | Best Val Dice | 0.6421 |
 
-**Augmentations (training):**
+**Augmentations (training — includes robustness to noise/corruption):**
 - RandomResizedCrop (scale 0.5–1.0) @ 192×192
 - HorizontalFlip
 - ShiftScaleRotate
@@ -171,14 +173,19 @@ Decoder (trained from scratch):
 
 ---
 
-## Important Notes
+## Competition Compliance
 
-- **Dataset:** `train.txt` only (1464 images) — split 80/20
-- **`val.txt` is the competition test set** — never used during training
-- Void/boundary pixels (label=255) are ignored in loss and metric
-- Output masks are saved as **PNG** (lossless, preserves class indices exactly)
-- Output filename format: `{original_stem}_mask.png`
-- Masks are resized to **original image dimensions** (nearest-neighbour)
+| Requirement | Status |
+|---|---|
+| PyTorch framework only | ✅ |
+| Input `(3, 300, 300)` → Output `(300, 300)` | ✅ Model handles any input size |
+| Binary output mask (0=background, 255=foreground) | ✅ |
+| Output filename identical to input filename | ✅ |
+| `--in_dir` / `--out_dir` arguments | ✅ |
+| Output folder `30_output/` | ✅ |
+| 80/20 split from `train.txt` only | ✅ |
+| `val.txt` never used during training | ✅ |
+| Robustness to noise / blur / JPEG / contrast | ✅ (augmentation pipeline) |
 
 ---
 
