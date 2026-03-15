@@ -1,15 +1,15 @@
 """
 inference.py — PASCAL VOC Efficient Segmentation Challenge (Group 30)
 ======================================================================
-Runs the trained model on all images in a folder and writes binary
-segmentation masks (background=black/0, foreground=white/255) to an
-output folder.
+Runs the trained model on all images in a folder and writes 21-class
+segmentation masks (pixel values = class index 0-20) to an output folder.
+
+Output filename format: {original_name}_mask.png
+Output folder:         30_output/  (group number_output)
 
 Usage (as per submission guidelines):
-    python inference.py --in_dir=/path/to/test_images/ --out_dir=/path/to/30_output/
+    python inference.py --in_dir=/path/to/test_images/ --out_dir=30_output/
     python inference.py --in_dir=/path/to/test_images/
-
-Output filenames are identical to input filenames.
 """
 
 import os
@@ -31,7 +31,7 @@ from model import get_model
 
 def get_transform():
     return A.Compose([
-        A.Resize(300, 300),
+        A.Resize(192, 192),
         A.Normalize(mean=(0.485, 0.456, 0.406),
                     std=(0.229, 0.224, 0.225)),
         ToTensorV2(),
@@ -56,7 +56,7 @@ def parse_args():
     p.add_argument("--in_dir",     required=True,
                    help="Folder containing test images (.jpg / .jpeg / .png)")
     p.add_argument("--out_dir",    default="30_output",
-                   help="Output folder for binary masks (default: 30_output)")
+                   help="Output folder for segmentation masks (default: 30_output)")
     p.add_argument("--model_path", default="best_model.pth",
                    help="Path to trained model checkpoint")
     return p.parse_args()
@@ -102,20 +102,24 @@ def main():
             if image is None:
                 print(f"  [SKIP] Cannot read {fname}")
                 continue
+            orig_h, orig_w = image.shape[:2]
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
             tensor = transform(image=image)["image"].unsqueeze(0).to(device)
 
-            # Forward pass — returns integer class mask (1, H, W)
-            class_mask = model(tensor).squeeze(0).cpu().numpy()  # values 0-20
+            # Forward pass — returns integer class mask (H, W), values 0-20
+            class_mask = model(tensor).squeeze(0).cpu().numpy().astype(np.uint8)
 
-            # Convert to binary mask: class 0 = background (black), 1-20 = foreground (white)
-            binary_mask = np.where(class_mask > 0, 255, 0).astype(np.uint8)
+            # Resize mask back to original image dimensions (nearest-neighbour
+            # preserves integer class indices exactly)
+            class_mask = cv2.resize(class_mask, (orig_w, orig_h),
+                                    interpolation=cv2.INTER_NEAREST)
 
-            # Output filename identical to input filename (required by submission guidelines)
-            out_path = os.path.join(args.out_dir, fname)
-            cv2.imwrite(out_path, binary_mask)
-            print(f"  {fname:40s} → {fname}")
+            # Output filename: {original_stem}_mask.png
+            stem     = os.path.splitext(fname)[0]
+            out_name = f"{stem}_mask.png"
+            out_path = os.path.join(args.out_dir, out_name)
+            cv2.imwrite(out_path, class_mask)
 
     print(f"\nDone. {len(image_files)} masks saved to '{args.out_dir}/'")
 

@@ -59,7 +59,7 @@ def macro_dice_score(
 # ---------------------------------------------------------------------------
 
 def compute_flops(model: torch.nn.Module, device: torch.device):
-    dummy = torch.randn(1, 3, 300, 300, device=device)
+    dummy = torch.randn(1, 3, 192, 192, device=device)
 
     try:
         from thop import profile

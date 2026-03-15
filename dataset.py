@@ -1,7 +1,9 @@
 import os
 import cv2
+import numpy as np
 import torch
 from torch.utils.data import Dataset
+from PIL import Image
 
 
 class VOCDataset(Dataset):
@@ -32,8 +34,11 @@ class VOCDataset(Dataset):
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-        # 255 is the VOC "void/boundary" label; clamp anything else above 20
+        # IMPORTANT: VOC masks are palette-indexed PNGs where pixel value = class index.
+        # cv2.IMREAD_GRAYSCALE converts palette RGB colors to luminance values (wrong!).
+        # PIL 'P' mode preserves the actual palette index = class label.
+        mask = np.array(Image.open(mask_path), dtype=np.uint8)
+        # 255 is the VOC "void/boundary" label; anything miscoded above 20 is also void
         mask[mask > 20] = 255
 
         if self.transform:

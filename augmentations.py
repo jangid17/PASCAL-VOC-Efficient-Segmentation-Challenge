@@ -14,7 +14,7 @@ def get_train_transforms():
     """
     return A.Compose([
         # --- Geometry ---
-        A.RandomResizedCrop(size=(300, 300), scale=(0.5, 1.0), p=1.0),
+        A.RandomResizedCrop(size=(192, 192), scale=(0.5, 1.0), p=1.0),
         A.HorizontalFlip(p=0.5),
         A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1,
                            rotate_limit=15, border_mode=0, p=0.4),
@@ -46,7 +46,7 @@ def get_train_transforms():
 def get_val_transforms():
     """Minimal pipeline for validation / test."""
     return A.Compose([
-        A.Resize(300, 300),
+        A.Resize(192, 192),
         A.Normalize(mean=_MEAN, std=_STD),
         ToTensorV2(),
     ])

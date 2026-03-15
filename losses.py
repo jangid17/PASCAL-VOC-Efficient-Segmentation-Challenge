@@ -31,11 +31,13 @@ class DiceLoss(nn.Module):
 
 
 class CombinedLoss(nn.Module):
-    """0.5 × CrossEntropy + 0.5 × Dice."""
+    """0.5 × CrossEntropy (with class weights) + 0.5 × Dice."""
 
-    def __init__(self, num_classes: int = 21, ignore_index: int = 255):
+    def __init__(self, num_classes: int = 21, ignore_index: int = 255,
+                 class_weights: torch.Tensor = None):
         super().__init__()
-        self.ce   = nn.CrossEntropyLoss(ignore_index=ignore_index)
+        self.ce   = nn.CrossEntropyLoss(ignore_index=ignore_index,
+                                         weight=class_weights)
         self.dice = DiceLoss(num_classes, ignore_index)
 
     def forward(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
