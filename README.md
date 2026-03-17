@@ -149,7 +149,7 @@ Decoder (trained from scratch):
 | Setting | Value |
 |---|---|
 | Training input size | 192 × 192 |
-| Inference input size | 300 × 300 (competition spec) |
+| Inference input size | 300 × 300 |
 | Batch size | 16 |
 | Optimizer | AdamW (weight decay 1e-4) |
 | Backbone LR | 1e-4 |
