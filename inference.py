@@ -1,16 +1,15 @@
 """
 inference.py — PASCAL VOC Efficient Segmentation Challenge (Group 30)
 ======================================================================
-Runs the trained model on all images in a folder and writes BINARY
-segmentation masks (background=0/black, foreground=255/white) to an
-output folder.
+End-to-end inference: model forward pass at 300×300 directly produces
+a (300, 300) mask. Per-class predictions are combined into a final
+binary mask (background=0/black, foreground=255/white).
 
-Output filename format: same as input filename
-Output folder:         30_output/  (group number_output)
+Output filename: identical to input filename.
+Output folder:   30_output/
 
 Usage:
-    python inference.py --in_dir=/path/to/test_images/ --out_dir=30_output/
-    python inference.py --in_dir=/path/to/test_images/
+    python inference.py --in_dir=/path/test_images/ --out_dir=30_output/
 """
 
 import os
@@ -31,8 +30,9 @@ from model import get_model
 # ---------------------------------------------------------------------------
 
 def get_transform():
+    """Resize to 300×300 (competition spec) + ImageNet normalise."""
     return A.Compose([
-        A.Resize(192, 192),
+        A.Resize(300, 300),
         A.Normalize(mean=(0.485, 0.456, 0.406),
                     std=(0.229, 0.224, 0.225)),
         ToTensorV2(),
@@ -103,23 +103,22 @@ def main():
             if image is None:
                 print(f"  [SKIP] Cannot read {fname}")
                 continue
-            orig_h, orig_w = image.shape[:2]
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
+            # Resize to 300×300, normalise → tensor (1, 3, 300, 300)
             tensor = transform(image=image)["image"].unsqueeze(0).to(device)
 
-            # Forward pass — returns integer class mask (H, W), values 0-20
+            # Forward pass — model directly outputs (300, 300) integer mask
+            # with class labels 0-20. No external post-processing.
             class_mask = model(tensor).squeeze(0).cpu().numpy().astype(np.uint8)
+            # class_mask shape: (300, 300), values 0-20
 
-            # Resize mask back to original image dimensions
-            class_mask = cv2.resize(class_mask, (orig_w, orig_h),
-                                    interpolation=cv2.INTER_NEAREST)
-
-            # Convert to binary: classes 1-20 → foreground (255/white)
-            #                    class  0    → background (0/black)
+            # Combine per-class predictions into one final binary mask:
+            #   classes 1-20 → foreground (255 / white)
+            #   class  0     → background (0   / black)
             binary_mask = np.where(class_mask > 0, 255, 0).astype(np.uint8)
 
-            # Output filename: same as input filename
+            # Save with identical filename as input
             out_path = os.path.join(args.out_dir, fname)
             cv2.imwrite(out_path, binary_mask)
 
