@@ -156,7 +156,7 @@ Output: (300, 300) integer mask  [eval mode → argmax]
 |---|---|
 | Augmentation input size | 192 × 192 |
 | Internal processing size | 128 × 128 (inside model forward pass) |
-| Inference input size | 300 × 300 (competition spec) |
+| Inference input size | 300 × 300 |
 | Batch size | 16 |
 | Optimizer | AdamW (weight decay 1e-4) |
 | Backbone LR | 1e-4 |
