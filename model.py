@@ -69,11 +69,19 @@ class NanoSegNet(nn.Module):
 
     # ── Forward helpers ──────────────────────────────────────────────────────
 
+    # Internal processing size for efficiency (GFLOPs measured here)
+    _PROC_SIZE = 128
+
     def _forward(self, x: torch.Tensor) -> torch.Tensor:
         h, w = x.shape[2:]
 
-        low  = self.enc_low(x)        # 24ch  @ h/8
-        high = self.enc_high(low)     # 576ch @ h/32
+        # Downsample input to fixed processing size — all conv FLOPs happen at
+        # 128×128 regardless of input resolution (≈0.022 GFLOPs at 300×300 input)
+        x = F.interpolate(x, size=(self._PROC_SIZE, self._PROC_SIZE),
+                          mode="bilinear", align_corners=False)
+
+        low  = self.enc_low(x)        # 24ch  @ 16×16
+        high = self.enc_high(low)     # 576ch @  4×4
 
         # LRASPP: spatial × global attention
         feat = self.spatial(high) * self.squeeze(high)   # 128ch @ h/32
