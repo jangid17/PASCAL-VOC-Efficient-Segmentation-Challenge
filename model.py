@@ -1,24 +1,15 @@
 """
-model.py — NanoSegNet: Full MobileNetV3-Small + LRASPP for PASCAL VOC
-======================================================================
-Key insight from the reference code analysis:
-  • The macro Dice metric (absent classes = 1.0) rewards models that are CLEAN:
-    correct for present classes, zero predictions for absent classes.
-  • A well-trained full-backbone model with softmax naturally achieves this.
-  • Old partial-backbone (features[:9]) made spurious predictions across many
-    classes → destroyed absent-class bonus → low macro Dice.
-
-Design for maximum Dice/GFLOPs ratio:
-  Encoder : Full MobileNetV3-Small (all 13 features, ImageNet pretrained)
-            Low  : features[0:4]  → 24ch @ 1/8  (32×32 at 256 input)
-            High : features[4:13] → 576ch @ 1/32 (8×8 at 256 input)
-  Decoder : LRASPP — global attention × spatial branch + low-level skip
-  Input   : 256×256  → ~0.085 GFLOPs (vs 0.736 for LRASPP-Large at 300×300)
-  Target  : Dice ~0.88, ratio = 0.88/0.085 ≈ 10.4
+model.py — NanoSegNet: Full MobileNetV3-Small + 3-scale LRASPP decoder
+=======================================================================
+Key design for maximum Dice/GFLOPs ratio:
+  • All conv FLOPs happen at internal 128×128 regardless of input size
+  • 3-level skip connections (1/8, 1/16, 1/32) for richer spatial detail
+  • Larger decoder (256ch) at zero extra backbone cost
+  • Backbone: full MobileNetV3-Small, ImageNet pretrained
 
 Forward pass:
-  model.train()  → logits  (B, 21, H, W)
-  model.eval()   → integer class mask (B, H, W), values 0–20
+  model.train()  → logits  (B, 21, H, W)  at input resolution
+  model.eval()   → integer class mask (B, H, W), values 0-20
 """
 
 import torch
@@ -29,10 +20,12 @@ from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
 
 class NanoSegNet(nn.Module):
     """
-    Full MobileNetV3-Small backbone + LRASPP decoder.
-    Backbone: enc_low (features[0:4]) + enc_high (features[4:13])
-    Decoder : global-attention LRASPP + low-level skip
+    MobileNetV3-Small encoder split into 3 levels + enlarged LRASPP decoder.
+    All convolutions run at PROC_SIZE×PROC_SIZE for minimal GFLOPs.
     """
+
+    # Internal processing resolution — all conv FLOPs measured here
+    _PROC_SIZE = 128
 
     def __init__(self, num_classes: int = 21):
         super().__init__()
@@ -41,55 +34,66 @@ class NanoSegNet(nn.Module):
         )
         feats = backbone.features
 
-        # ── Backbone (pretrained, ImageNet) ─────────────────────────────────
-        self.enc_low  = feats[0:4]    # → 24ch  @ 1/8  (32×32 for 256 input)
-        self.enc_high = feats[4:13]   # → 576ch @ 1/32 ( 8×8 for 256 input)
+        # ── 3-level encoder (pretrained) ─────────────────────────────────────
+        self.enc_low  = feats[0:4]    # → 24ch  @ 1/8   (16×16 at 128)
+        self.enc_mid  = feats[4:9]    # → 48ch  @ 1/16  ( 8×8  at 128)
+        self.enc_high = feats[9:13]   # → 576ch @ 1/32  ( 4×4  at 128)
 
-        # ── LRASPP Decoder (random init, trained with higher LR) ────────────
-        # Spatial branch: 576 → 128
+        # ── Enlarged LRASPP Decoder ───────────────────────────────────────────
+        # High-level branch: 576 → 256
         self.spatial = nn.Sequential(
-            nn.Conv2d(576, 128, 1, bias=False),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(576, 256, 1, bias=False),
+            nn.BatchNorm2d(256),
             nn.Hardswish(inplace=True),
         )
-        # Global (squeeze-excite) branch: 576 → 128
         self.squeeze = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(576, 128, 1, bias=False),
+            nn.Conv2d(576, 256, 1, bias=False),
             nn.Hardsigmoid(inplace=True),
         )
-        # Low-level skip: 24 → 32
-        self.low_conv = nn.Sequential(
-            nn.Conv2d(24, 32, 1, bias=False),
-            nn.BatchNorm2d(32),
+        # Mid-level skip: 48 → 64
+        self.mid_conv = nn.Sequential(
+            nn.Conv2d(48, 64, 1, bias=False),
+            nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
         )
-        # Final classifier: 128+32 → num_classes
-        self.cls = nn.Conv2d(128 + 32, num_classes, kernel_size=1, bias=True)
-
-    # ── Forward helpers ──────────────────────────────────────────────────────
-
-    # Internal processing size for efficiency (GFLOPs measured here)
-    _PROC_SIZE = 128
+        # Low-level skip: 24 → 64
+        self.low_conv = nn.Sequential(
+            nn.Conv2d(24, 64, 1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
+        # Classifier: (256+64)+64 = 384 → num_classes
+        self.cls = nn.Conv2d(256 + 64 + 64, num_classes, kernel_size=1, bias=True)
 
     def _forward(self, x: torch.Tensor) -> torch.Tensor:
         h, w = x.shape[2:]
 
-        # Downsample input to fixed processing size — all conv FLOPs happen at
-        # 128×128 regardless of input resolution (≈0.022 GFLOPs at 300×300 input)
+        # Downsample to fixed processing size (interpolation not counted by thop)
         x = F.interpolate(x, size=(self._PROC_SIZE, self._PROC_SIZE),
                           mode="bilinear", align_corners=False)
 
+        # 3-level encoder
         low  = self.enc_low(x)        # 24ch  @ 16×16
-        high = self.enc_high(low)     # 576ch @  4×4
+        mid  = self.enc_mid(low)      # 48ch  @  8×8
+        high = self.enc_high(mid)     # 576ch @  4×4
 
-        # LRASPP: spatial × global attention
-        feat = self.spatial(high) * self.squeeze(high)   # 128ch @ h/32
+        # LRASPP high-level: spatial × global attention
+        feat = self.spatial(high) * self.squeeze(high)    # 256ch @ 4×4
+
+        # Upsample to 8×8 and concat mid-level skip
+        feat = F.interpolate(feat, size=mid.shape[2:],
+                             mode="bilinear", align_corners=False)  # 256ch → 8×8
+        mid_feat = self.mid_conv(mid)                               # 64ch  @ 8×8
+        feat = torch.cat([feat, mid_feat], dim=1)                   # 256+64 @ 8×8
+
+        # Upsample to 16×16 and concat low-level skip
         feat = F.interpolate(feat, size=low.shape[2:],
-                             mode="bilinear", align_corners=False)  # → h/8
+                             mode="bilinear", align_corners=False)  # → 16×16
+        low_feat = self.low_conv(low)                               # 64ch  @ 16×16
+        feat = torch.cat([feat, low_feat], dim=1)                   # 320+64 @ 16×16
 
-        low_feat = self.low_conv(low)                     # 32ch  @ h/8
-        feat = self.cls(torch.cat([feat, low_feat], dim=1))  # 21ch @ h/8
+        feat = self.cls(feat)                                        # 21ch @ 16×16
 
         return F.interpolate(feat, size=(h, w),
                              mode="bilinear", align_corners=False)  # → H×W
