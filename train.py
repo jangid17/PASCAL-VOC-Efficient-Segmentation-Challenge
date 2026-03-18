@@ -104,9 +104,13 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
         with torch.amp.autocast("cuda" if device.type == "cuda" else "cpu"):
             logits = model.get_logits(images)
             loss   = criterion(logits, masks)
+        if torch.isnan(loss) or torch.isinf(loss):
+            optimizer.zero_grad()
+            scaler.update()
+            continue
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
         scaler.step(optimizer)
         scaler.update()
         total_loss += loss.item()
@@ -138,6 +142,8 @@ def parse_args():
                    help="Lower LR for pretrained backbone (transfer learning)")
     p.add_argument("--num_workers", type=int,   default=4)
     p.add_argument("--checkpoint",  default="best_model.pth")
+    p.add_argument("--resume",      default=None,
+                   help="Path to checkpoint to resume training from")
     p.add_argument("--log_csv",     default="training_log.csv")
     return p.parse_args()
 
@@ -173,11 +179,19 @@ def main():
     model     = get_model(num_classes=21).to(device)
     criterion = CombinedLoss(num_classes=21, class_weights=class_weights)
 
+    # ── Resume from checkpoint if specified ──────────────────────────────────
+    if args.resume and os.path.isfile(args.resume):
+        state = torch.load(args.resume, map_location=device, weights_only=True)
+        model.load_state_dict(state)
+        print(f"Resumed from checkpoint: {args.resume}")
+
     # ── Differential LR: lower for pretrained backbone, higher for decoder ───
     backbone_params = list(model.enc_low.parameters()) + \
+                      list(model.enc_mid.parameters()) + \
                       list(model.enc_high.parameters())
     decoder_params  = list(model.spatial.parameters()) + \
                       list(model.squeeze.parameters()) + \
+                      list(model.mid_conv.parameters()) + \
                       list(model.low_conv.parameters()) + \
                       list(model.cls.parameters())
 

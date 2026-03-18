@@ -10,12 +10,12 @@ LRASPP-style decoder with **internal 128×128 processing** to maximise the Dice/
 
 | Metric | Value |
 |---|---|
-| **Macro Dice Score (Val, 21 classes)** | **0.5920** |
+| **Macro Dice Score (Val, 21 classes)** | **0.6518** |
 | **FLOPs per image** | **0.023 GFLOPs** (conv ops at 128×128 inside model) |
-| **Dice / GFLOPs ratio** | **25.74** |
+| **Dice / GFLOPs ratio** | **28.34** |
 | **Parameters** | **1.079 M** |
 | Input → Output | `(3, 300, 300)` → `(300, 300)` binary mask (0=background, 255=foreground) |
-| Best epoch | 150 / 150 |
+| Best epoch | 141 / 200 |
 
 ---
 
@@ -83,7 +83,7 @@ pip install -r requirements.txt
 ### STEP 1 — Train
 
 ```bash
-python3 train.py --epochs 150 --batch_size 16 --lr 1e-3 --backbone_lr 1e-4
+python3 train.py --epochs 200 --batch_size 16 --lr 1e-3 --backbone_lr 1e-4
 ```
 
 Output: `best_model.pth`, `training_log.csv`
@@ -97,7 +97,7 @@ python3 evaluate.py --checkpoint best_model.pth
 Expected output:
 ```
 ========================================
-  Macro Dice Score : 0.5920
+  Macro Dice Score : 0.6518
 ========================================
   FLOPs  : 0.023 GFLOPs
   Params : 1.079 M
@@ -161,11 +161,11 @@ Output: (300, 300) integer mask  [eval mode → argmax]
 | Optimizer | AdamW (weight decay 1e-4) |
 | Backbone LR | 1e-4 |
 | Decoder LR | 1e-3 |
-| Scheduler | CosineAnnealingLR (T_max=150, eta_min=1e-6) |
+| Scheduler | CosineAnnealingLR (T_max=200, eta_min=1e-6) |
 | Loss | 0.5 × CrossEntropy (class-weighted) + 0.5 × Dice |
-| Epochs | 150 |
+| Epochs | 200 |
 | Mixed precision | AMP (torch.amp.autocast) |
-| Best Val Dice | 0.5920 |
+| Best Val Dice | 0.6518 |
 
 > **Note:** Training augmentation at 192×192 is an internal implementation detail.
 > The competition only specifies model behaviour at inference (300×300 in → 300×300 out).
@@ -205,7 +205,7 @@ Output: (300, 300) integer mask  [eval mode → argmax]
 
 ```bash
 # 1. Train
-python3 train.py --epochs 150 --batch_size 16 --lr 1e-3 --backbone_lr 1e-4
+python3 train.py --epochs 200 --batch_size 16 --lr 1e-3 --backbone_lr 1e-4
 
 # 2. Evaluate
 python3 evaluate.py
